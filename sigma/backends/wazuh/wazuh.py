@@ -50,7 +50,13 @@ def escape_regex_literal(text: str) -> str:
     """Escape regex special characters while preserving standard path separators."""
     res = []
     for char in text:
-        if char in REGEX_SPECIAL_CHARS:
+        if char == "\n":
+            res.append(r"\n")
+        elif char == "\r":
+            res.append(r"\r")
+        elif char == "\t":
+            res.append(r"\t")
+        elif char in REGEX_SPECIAL_CHARS:
             res.append("\\" + char)
         else:
             res.append(char)
@@ -63,6 +69,7 @@ class WazuhBackend(Backend):
     """
 
     name: ClassVar[str] = "Wazuh SIEM XML rules"
+    MAX_DNF_DISJUNCTS: ClassVar[int] = 256
     formats: ClassVar[Dict[str, str]] = {
         "default": "Standard Wazuh XML ruleset inside <group>",
         "rule_only": "Wazuh XML <rule> elements without root <group>",
@@ -412,6 +419,12 @@ class WazuhBackend(Backend):
                 child = cond.args[0]
                 if isinstance(child, ConditionFieldEqualsValueExpression):
                     return [[(child, False)]]
+                elif isinstance(child, ConditionValueExpression):
+                    pattern, _ = self.convert_value_to_pattern(child.value, state, is_keyword=True)
+                    combined_expr = ConditionFieldEqualsValueExpression(
+                        "", SigmaRegularExpression(pattern)
+                    )
+                    return [[(combined_expr, False)]]
                 elif isinstance(child, ConditionOR):
                     # NOT (A or B) = (NOT A) and (NOT B)
                     dnf_terms = [self._normalize_to_dnf(ConditionNOT([arg], cond.source), state) for arg in child.args]
@@ -449,7 +462,7 @@ class WazuhBackend(Backend):
     def _cartesian_conjunction(
         self, dnf_list: List[List[List[Tuple[ConditionFieldEqualsValueExpression, bool]]]]
     ) -> List[List[Tuple[ConditionFieldEqualsValueExpression, bool]]]:
-        """Compute the distributive AND of multiple DNF expressions."""
+        """Compute the distributive AND of multiple DNF expressions with complexity safeguards."""
         if not dnf_list:
             return []
         result = dnf_list[0]
@@ -458,6 +471,10 @@ class WazuhBackend(Backend):
             for clause_a in result:
                 for clause_b in next_dnf:
                     new_result.append(clause_a + clause_b)
+                    if len(new_result) > self.MAX_DNF_DISJUNCTS:
+                        raise WazuhConversionError(
+                            f"Boolean condition complexity exceeds maximum supported disjunctive terms ({self.MAX_DNF_DISJUNCTS}). Rule should be refactored or simplified."
+                        )
             result = new_result
         return result
 

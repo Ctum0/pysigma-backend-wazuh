@@ -1,8 +1,30 @@
 """Intermediate Representation (IR) and XML Serialization for Wazuh Rules."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
-from xml.sax.saxutils import escape as xml_escape
+from typing import Any, List, Optional
+from xml.sax.saxutils import escape as _sax_escape
+
+
+def xml_escape(value: Any) -> str:
+    """Safely escape text for XML elements and attributes, preventing injection and stripping illegal control characters."""
+    if value is None:
+        return ""
+    text = str(value)
+    sanitized = []
+    for ch in text:
+        code = ord(ch)
+        if (
+            code in (0x9, 0xA, 0xD)
+            or (0x20 <= code <= 0xD7FF)
+            or (0xE000 <= code <= 0xFFFD)
+            or (0x10000 <= code <= 0x10FFFF)
+        ):
+            sanitized.append(ch)
+        else:
+            sanitized.append(f"\\x{code:02x}")
+    clean_text = "".join(sanitized)
+    return _sax_escape(clean_text, entities={'"': "&quot;", "'": "&apos;"})
+
 
 
 @dataclass
