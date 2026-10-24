@@ -1,0 +1,26 @@
+<!--
+  Wazuh Decoders and Base Rules for Web Access Logs
+-->
+
+<decoder name="web-access-custom">
+  <type>web-log</type>
+  <prematch type="pcre2">^\S+ \S+ \S+ \[.*?\] "\w+ \S+ HTTP/\d\.\d"</prematch>
+  <regex type="pcre2">^(\S+) \S+ \S+ \[.*?\] "(\w+) (\S+) HTTP/\d\.\d" (\d+) \S+ "(.*?)" "(.*?)"</regex>
+  <order>srcip, protocol, url, id, extra_data, browser</order>
+</decoder>
+
+<decoder name="web-access-common">
+  <type>web-log</type>
+  <prematch type="pcre2">^\S+ \S+ \S+ \[.*?\] "\w+ \S+ HTTP/\d\.\d"</prematch>
+  <regex type="pcre2">^(\S+) \S+ \S+ \[.*?\] "(\w+) (\S+) HTTP/\d\.\d" (\d+)</regex>
+  <order>srcip, protocol, url, id</order>
+</decoder>
+
+<!-- Base Rule for Web Access Logs -->
+<group name="web,accesslog,">
+  <rule id="100002" level="0">
+    <if_sid>31100,31108</if_sid>
+    <description>Web Access Log Base Event</description>
+    <group>web_access,</group>
+  </rule>
+</group>

@@ -1,0 +1,39 @@
+<!--
+  Wazuh Decoders and Base Rules for Linux auditd execve logs
+-->
+
+<decoder name="auditd-execve">
+  <prematch type="pcre2">^type=EXECVE|^node=\S+ type=EXECVE</prematch>
+</decoder>
+
+<decoder name="auditd-execve-args">
+  <parent>auditd-execve</parent>
+  <regex type="pcre2">a0="?([^"\s]+)"?</regex>
+  <order>audit.command</order>
+</decoder>
+
+<decoder name="auditd-execve-exe">
+  <parent>auditd-execve</parent>
+  <regex type="pcre2">exe="?([^"\s]+)"?</regex>
+  <order>audit.exe</order>
+</decoder>
+
+<decoder name="auditd-execve-user">
+  <parent>auditd-execve</parent>
+  <regex type="pcre2">auid=(\d+)</regex>
+  <order>audit.auid</order>
+</decoder>
+
+<decoder name="auditd-execve-cwd">
+  <parent>auditd-execve</parent>
+  <regex type="pcre2">cwd="?([^"\s]+)"?</regex>
+  <order>audit.cwd</order>
+</decoder>
+
+<!-- Base Rule for Auditd Execve -->
+<group name="audit,linux,">
+  <rule id="80700" level="0">
+    <field name="audit.type">^EXECVE$|^SYSCALL$</field>
+    <description>Auditd Execve / Syscall Base Event</description>
+  </rule>
+</group>

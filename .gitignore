@@ -1,0 +1,22 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Cloned evaluation corpora
+corpus/
+
+# Local build artifacts
+build/
+dist/
+*.egg-info/
+.artifacts/

@@ -1,0 +1,48 @@
+<!--
+  Wazuh Decoders and Base Rules for Windows Process Creation
+  Log Sources: Sysmon Event ID 1 & Windows Security 4688
+-->
+
+<!-- JSON Decoder for Sysmon / Windows Events -->
+<decoder name="sysmon-json">
+  <prematch type="pcre2">"win":\s*\{\s*"system":</prematch>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>
+
+<!-- Key-Value Decoder for Sysmon Text Log Format -->
+<decoder name="sysmon-text">
+  <prematch type="pcre2">EventID=1|EventID: 1</prematch>
+</decoder>
+
+<decoder name="sysmon-text-fields">
+  <parent>sysmon-text</parent>
+  <regex type="pcre2">Image:\s*([^\r\n]+)</regex>
+  <order>win.eventdata.image</order>
+</decoder>
+
+<decoder name="sysmon-text-fields">
+  <parent>sysmon-text</parent>
+  <regex type="pcre2">CommandLine:\s*([^\r\n]+)</regex>
+  <order>win.eventdata.commandLine</order>
+</decoder>
+
+<decoder name="sysmon-text-fields">
+  <parent>sysmon-text</parent>
+  <regex type="pcre2">ParentImage:\s*([^\r\n]+)</regex>
+  <order>win.eventdata.parentImage</order>
+</decoder>
+
+<decoder name="sysmon-text-fields">
+  <parent>sysmon-text</parent>
+  <regex type="pcre2">User:\s*([^\r\n]+)</regex>
+  <order>win.eventdata.user</order>
+</decoder>
+
+<!-- Base Rule for Sysmon Event 1 & Windows 4688 -->
+<group name="sysmon,windows,">
+  <rule id="100000" level="0">
+    <field name="win.system.eventID">^1$|^4688$</field>
+    <description>Sysmon Event ID 1 / Windows 4688 Process Creation Base Event</description>
+    <group>sysmon_event1,</group>
+  </rule>
+</group>
