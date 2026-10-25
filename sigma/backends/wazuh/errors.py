@@ -1,6 +1,7 @@
 """Typed exceptions for pySigma Wazuh backend."""
 
-from sigma.exceptions import SigmaConversionError, SigmaError
+from typing import Any, Optional
+from sigma.exceptions import SigmaBackendError, SigmaError
 
 
 class WazuhError(SigmaError):
@@ -8,9 +9,15 @@ class WazuhError(SigmaError):
     pass
 
 
-class WazuhConversionError(SigmaConversionError, WazuhError):
+class WazuhConversionError(WazuhError, SigmaBackendError):
     """General error during Sigma to Wazuh XML conversion."""
-    pass
+    def __init__(self, message: str, rule: Any = None, source: Optional[Any] = None):
+        self.message = message
+        self.rule = rule
+        super().__init__(message, source=source)
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class WazuhUnsupportedModifierError(WazuhConversionError):

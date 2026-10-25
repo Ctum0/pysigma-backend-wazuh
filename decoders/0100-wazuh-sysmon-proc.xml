@@ -41,7 +41,8 @@
 <!-- Base Rule for Sysmon Event 1 & Windows 4688 -->
 <group name="sysmon,windows,">
   <rule id="100000" level="0">
-    <field name="win.system.eventID">^1$|^4688$</field>
+    <if_sid>60000</if_sid>
+    <field name="win.system.eventID" type="pcre2">^1$|^4688$</field>
     <description>Sysmon Event ID 1 / Windows 4688 Process Creation Base Event</description>
     <group>sysmon_event1,</group>
   </rule>

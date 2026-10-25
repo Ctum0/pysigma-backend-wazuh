@@ -4,6 +4,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -33,7 +34,8 @@ BASE_RULES = {
     "windows": """
 <group name="sysmon_base,">
   <rule id="100000" level="0">
-    <field name="win.system.eventID">^1$|^4688$</field>
+    <if_sid>60000</if_sid>
+    <field name="win.system.eventID" type="pcre2">^1$|^4688$</field>
     <description>Windows Sysmon EID 1 / 4688 Base Event</description>
     <group>sysmon_event1,</group>
   </rule>
@@ -42,7 +44,7 @@ BASE_RULES = {
     "linux": """
 <group name="audit_base,">
   <rule id="100001" level="0">
-    <field name="audit.type">^EXECVE$|^SYSCALL$</field>
+    <field name="audit.type" type="pcre2">^EXECVE$|^SYSCALL$</field>
     <description>Linux Auditd Execve Base Event</description>
     <group>audit_execve,</group>
   </rule>
@@ -58,6 +60,24 @@ BASE_RULES = {
 </group>
 """,
 }
+
+
+def get_container_runtime() -> str:
+    for rt in ["docker", "podman"]:
+        path = shutil.which(rt)
+        if path:
+            try:
+                res = subprocess.run(
+                    [path, "ps", "--filter", "name=wazuh-manager", "--format", "{{.Names}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if "wazuh-manager" in res.stdout:
+                    return path
+            except Exception:
+                pass
+    return "docker"
 
 
 def clean_regex_to_sample(pattern: str, default: str = "test") -> str:
@@ -304,8 +324,9 @@ def run_wazuh_logtest_batch(full_xml: str, events: List[Dict[str, Any]]) -> List
 EOF
 /var/ossec/bin/wazuh-analysisd -t
 """
+    runtime = get_container_runtime()
     verify_res = subprocess.run(
-        ["podman", "exec", "-i", "wazuh-manager", "/bin/sh", "-c", cmd_write],
+        [runtime, "exec", "-i", "wazuh-manager", "/bin/sh", "-c", cmd_write],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -327,7 +348,7 @@ EOF
             lines.append(json.dumps(e))
     input_payload = "\n".join(lines) + "\n"
     res = subprocess.run(
-        ["podman", "exec", "-i", "wazuh-manager", "/var/ossec/bin/wazuh-logtest"],
+        [runtime, "exec", "-i", "wazuh-manager", "/var/ossec/bin/wazuh-logtest"],
         input=input_payload.encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

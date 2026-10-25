@@ -17,21 +17,22 @@ from sigma.pipelines.wazuh import (
 BASE_RULES = """
 <group name="sysmon_base,">
   <rule id="100000" level="0">
-    <field name="win.system.eventID">^1$|^4688$</field>
+    <if_sid>60000</if_sid>
+    <field name="win.system.eventID" type="pcre2">^1$|^4688$</field>
     <description>Windows Sysmon EID 1 / 4688 Base Event</description>
     <group>sysmon_event1,</group>
   </rule>
 </group>
 <group name="audit_base,">
   <rule id="100001" level="0">
-    <field name="audit.type">^EXECVE$|^SYSCALL$</field>
+    <field name="audit.type" type="pcre2">^EXECVE$|^SYSCALL$</field>
     <description>Linux Auditd Execve Base Event</description>
     <group>audit_execve,</group>
   </rule>
 </group>
 <group name="web_base,">
   <rule id="100002" level="0">
-    <category>web-log</category>
+    <if_sid>31100,31108</if_sid>
     <description>Web Access Log Base Event</description>
     <group>web_access,</group>
   </rule>
@@ -220,8 +221,6 @@ def test_live_wazuh_web_execution():
     rule = SigmaCollection.from_yaml(yaml_text).rules[0]
     w_rules = backend.convert_rule(rule)
     assert len(w_rules) == 1
-    # web rules chain to base rule 31100 or web_access group
-    w_rules[0].if_sid = [31100, 31108]
     rule_xml = w_rules[0].to_xml()
 
     assert load_rules_into_container(rule_xml)

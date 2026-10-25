@@ -28,6 +28,7 @@ from sigma.types import (
     SigmaNull,
     SigmaQueryExpression,
     SigmaExpansion,
+    SigmaExists,
     SpecialChars,
 )
 from sigma.exceptions import SigmaError
@@ -77,6 +78,11 @@ class WazuhBackend(Backend):
     }
     default_format: ClassVar[str] = "default"
     requires_pipeline: ClassVar[bool] = False
+
+    correlation_methods: ClassVar[Dict[str, str]] = {
+        "default": "Wazuh if_matched_sid frequency and timeframe correlation",
+    }
+    default_correlation_method: ClassVar[str] = "default"
 
     # Severity mapping from Sigma levels to Wazuh rule levels (0-16)
     LEVEL_MAP: ClassVar[Dict[str, int]] = {
@@ -164,6 +170,8 @@ class WazuhBackend(Backend):
                     "Null",
                     "Null field matching is not directly supported in Wazuh field XML."
                 )
+            case SigmaExists():
+                return ".*", "pcre2"
             case _:
                 raise WazuhUnsupportedConditionError(
                     value.__class__.__name__,
@@ -174,33 +182,33 @@ class WazuhBackend(Backend):
         self, s: SigmaString, case_sensitive: bool = False, is_keyword: bool = False
     ) -> Tuple[str, Optional[str]]:
         """Convert a SigmaString containing literal parts and wildcards into a regex pattern."""
-        parts = []
-        is_first = True
-        has_start_wildcard = False
-        has_end_wildcard = False
-
         items = list(s)
         if not items:
             return "^$", "pcre2" if self.regex_engine == "pcre2" else "osregex"
 
-        if items[0] == SpecialChars.WILDCARD_MULTI:
-            has_start_wildcard = True
-        if items[-1] == SpecialChars.WILDCARD_MULTI:
-            has_end_wildcard = True
+        has_start_wildcard = (items[0] == SpecialChars.WILDCARD_MULTI)
+        has_end_wildcard = (items[-1] == SpecialChars.WILDCARD_MULTI)
 
-        for item in items:
+        start_idx = 1 if has_start_wildcard else 0
+        end_idx = (len(items) - 1) if (has_end_wildcard and len(items) > 1) else len(items)
+
+        parts = []
+        prev_was_wildcard = False
+        for item in items[start_idx:end_idx]:
             if item == SpecialChars.WILDCARD_MULTI:
-                if not is_first and item != items[-1]:
+                if not prev_was_wildcard:
                     parts.append(".*")
+                    prev_was_wildcard = True
             elif item == SpecialChars.WILDCARD_SINGLE:
                 parts.append(".")
+                prev_was_wildcard = False
             elif isinstance(item, str):
                 parts.append(escape_regex_literal(item))
-            is_first = False
+                prev_was_wildcard = False
 
         body = "".join(parts)
         if not body:
-            body = ".*"
+            body = ".*" if (has_start_wildcard or has_end_wildcard) else ""
 
         if self.regex_engine == "pcre2":
             prefix = "" if case_sensitive else "(?i)"
@@ -265,6 +273,9 @@ class WazuhBackend(Backend):
         return WazuhField(name=cond.field, pattern=pattern, type=engine, negate=False)
 
     def convert_condition_field_eq_val_cidr(self, cond: ConditionFieldEqualsValueExpression, state: ConversionState) -> Any:
+        field_lower = cond.field.lower()
+        if field_lower in ("srcip", "dstip"):
+            return WazuhField(name=cond.field, pattern=str(cond.value), type=None, negate=False)
         return self._convert_cidr(cond.value)
 
     def convert_condition_field_compare_op_val(self, cond: ConditionFieldEqualsValueExpression, state: ConversionState) -> Any:
@@ -280,10 +291,14 @@ class WazuhBackend(Backend):
         raise WazuhUnsupportedConditionError("QueryExpression", "Sub-query expressions are not supported.")
 
     def convert_condition_field_exists(self, cond: ConditionFieldEqualsValueExpression, state: ConversionState) -> Any:
-        return WazuhField(name=cond.field, pattern=".", type="pcre2", negate=False)
+        return WazuhField(name=cond.field, pattern=".*", type="pcre2", negate=False)
 
     def convert_condition_field_not_exists(self, cond: ConditionFieldEqualsValueExpression, state: ConversionState) -> Any:
-        return WazuhField(name=cond.field, pattern=".", type="pcre2", negate=True)
+        raise WazuhUnsupportedConditionError(
+            "FieldNotExists",
+            f"Wazuh field engine cannot test for the non-existence of dynamic field '{cond.field}' "
+            "because <field negate='yes'> requires the field to exist in decoded output."
+        )
 
     def convert_condition_val_str(self, cond: ConditionValueExpression, state: ConversionState) -> Any:
         raise WazuhUnsupportedConditionError("UnboundString", "Unbound keyword string without field.")
@@ -300,35 +315,55 @@ class WazuhBackend(Backend):
     def convert_condition_field_eq_val_timestamp_part(self, cond: ConditionFieldEqualsValueExpression, state: ConversionState) -> Any:
         raise WazuhUnsupportedConditionError("TimestampPart", "Timestamp part matching is not supported.")
 
-    # Correlation abstract methods
-    def convert_correlation_event_count_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    # Correlation abstract methods matching pySigma Backend signatures
+    def convert_correlation_event_count_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_value_count_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    def convert_correlation_value_count_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_temporal_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    def convert_correlation_temporal_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_temporal_ordered_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    def convert_correlation_temporal_ordered_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_extended_temporal_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    def convert_correlation_extended_temporal_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_extended_temporal_ordered_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
-        return self.convert_correlation_rule(rule)
+    def convert_correlation_extended_temporal_ordered_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
+        return self.convert_correlation_rule_to_wazuh(rule)
 
-    def convert_correlation_value_avg_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
+    def convert_correlation_value_avg_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
         raise WazuhUnsupportedConditionError("CorrelationAvg", "Average aggregation is not supported by Wazuh.")
 
-    def convert_correlation_value_sum_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
+    def convert_correlation_value_sum_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
         raise WazuhUnsupportedConditionError("CorrelationSum", "Sum aggregation is not supported by Wazuh.")
 
-    def convert_correlation_value_median_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
+    def convert_correlation_value_median_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
         raise WazuhUnsupportedConditionError("CorrelationMedian", "Median aggregation is not supported by Wazuh.")
 
-    def convert_correlation_value_percentile_rule(self, rule: SigmaCorrelationRule, state: ConversionState) -> Any:
+    def convert_correlation_value_percentile_rule(
+        self, rule: SigmaCorrelationRule, output_format: Optional[str] = None, method: str = "default"
+    ) -> List[Any]:
         raise WazuhUnsupportedConditionError("CorrelationPercentile", "Percentile aggregation is not supported by Wazuh.")
 
     # -------------------------------------------------------------------------
@@ -610,10 +645,9 @@ class WazuhBackend(Backend):
     # Correlation Rule Conversion
     # -------------------------------------------------------------------------
 
-    def convert_correlation_rule(
+    def convert_correlation_rule_to_wazuh(
         self,
         rule: SigmaCorrelationRule,
-        output_format: Optional[str] = None,
     ) -> List[WazuhRule]:
         """Convert a SigmaCorrelationRule to Wazuh correlation rule using if_matched_sid."""
         rule_ident = str(rule.id) if rule.id else rule.title
@@ -621,12 +655,13 @@ class WazuhBackend(Backend):
         description = f"Correlation: {rule.title}"
 
         referenced_sids: List[int] = []
-        for ref in rule.rules:
-            ref_id = str(ref.name if hasattr(ref, "name") else ref)
-            if ref_id in self.id_allocator.allocated_by_rule:
-                referenced_sids.append(self.id_allocator.allocated_by_rule[ref_id])
-            else:
-                referenced_sids.append(self.id_allocator.allocate(ref_id))
+        if rule.rules:
+            for ref in rule.rules:
+                ref_id = str(ref.name if hasattr(ref, "name") else ref)
+                if ref_id in self.id_allocator.allocated_by_rule:
+                    referenced_sids.append(self.id_allocator.allocated_by_rule[ref_id])
+                else:
+                    referenced_sids.append(self.id_allocator.allocate(ref_id))
 
         primary_matched_sid = referenced_sids[0] if referenced_sids else 100000
         sid = self.id_allocator.allocate(rule_ident)
@@ -656,7 +691,6 @@ class WazuhBackend(Backend):
                 if digits:
                     frequency = int(digits)
 
-
         same_field = None
         if hasattr(rule, "group_by") and rule.group_by:
             same_field = str(rule.group_by[0])
@@ -672,6 +706,17 @@ class WazuhBackend(Backend):
             groups=["sigma", "correlation"],
         )
         return [w_rule]
+
+    def convert_correlation_rule(
+        self,
+        rule: SigmaCorrelationRule,
+        output_format: Optional[str] = None,
+        method: Optional[str] = None,
+        callback: Optional[Any] = None,
+    ) -> List[Any]:
+        if method is None and callback is None and (not hasattr(self, "last_processing_pipeline") or self.last_processing_pipeline is None):
+            return self.convert_correlation_rule_to_wazuh(rule)
+        return super().convert_correlation_rule(rule, output_format, method, callback)
 
     # -------------------------------------------------------------------------
     # Output Finalization

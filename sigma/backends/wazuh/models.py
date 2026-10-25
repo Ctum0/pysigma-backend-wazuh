@@ -58,6 +58,21 @@ class WazuhField:
             return f"{indent}<regex{attr_str}>{escaped_pattern}</regex>"
 
         field_lower = self.name.lower()
+        if field_lower in ("srcip", "dstip"):
+            clean_ip = self.pattern
+            if clean_ip.startswith("(?i)"):
+                clean_ip = clean_ip[4:]
+            if clean_ip.startswith("^"):
+                clean_ip = clean_ip[1:]
+            if clean_ip.endswith("$"):
+                clean_ip = clean_ip[:-1]
+            clean_ip = clean_ip.replace(r"\.", ".")
+            attrs = []
+            if self.negate:
+                attrs.append('negate="yes"')
+            attr_str = f" {' '.join(attrs)}" if attrs else ""
+            return f"{indent}<{field_lower}{attr_str}>{xml_escape(clean_ip)}</{field_lower}>"
+
         if field_lower in self.WAZUH_STATIC_FIELDS:
             attrs = []
             if self.type:
