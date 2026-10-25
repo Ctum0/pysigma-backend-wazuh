@@ -16,9 +16,14 @@ def wazuh_combined_pipeline() -> ProcessingPipeline:
     )
 
 
+wazuh_pipeline = wazuh_combined_pipeline
+
+
 __all__ = [
     "wazuh_windows_pipeline",
     "wazuh_linux_pipeline",
     "wazuh_web_pipeline",
     "wazuh_combined_pipeline",
+    "wazuh_pipeline",
 ]
+
