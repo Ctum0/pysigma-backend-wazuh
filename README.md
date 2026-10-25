@@ -2,19 +2,26 @@
 
 A production-grade [pySigma](https://github.com/SigmaHQ/pySigma) backend that compiles vendor-neutral Sigma detection rules into native, validated [Wazuh SIEM](https://wazuh.com) XML rulesets.
 
+---
+
 ## Key Features
 
 - **AST Boolean Normalization**: Compiles complex Sigma boolean trees (`and`, `or`, `not`, `1 of`, `all of`) into Disjunctive Normal Form (DNF) with automatic regex alternation and optional `<if_sid>` chaining.
-- **Deterministic Rule ID Allocation**: Cryptographically hashes Sigma rule UUIDs/IDs into Wazuh's local user range (`100000 - 120000`) with deterministic collision resolution.
+- **Deterministic Rule ID Allocation**: Cryptographically hashes Sigma rule UUIDs/IDs into Wazuh's local user range (`100000 - 120000` by default, or configurable custom ranges) with deterministic collision resolution.
 - **Dialect Accuracy**:
   - `pcre2` engine support (Wazuh 4.x native) preserving full PCRE syntax, non-greedy quantifiers, and case-insensitivity flags (`(?i)`).
   - `osregex` engine support with strict dialect validation that rejects incompatible PCRE constructs to prevent silent matching failures.
-- **Shipped Decoders**: Includes verified Wazuh decoders for:
+- **SOC Alert Tuning & Triage Guidance**:
+  - Automatically embeds Sigma `falsepositives` lists as XML comments immediately above rules for tier-1 SOC triage.
+  - Supports rule status tracking and optional experimental rule demotion (`demote_experimental=True`) to avoid alert fatigue.
+- **Shipped Decoders**: Includes verified Wazuh decoders and base rules for:
   1. Windows Process Creation (Sysmon Event ID 1 & Windows Security 4688)
   2. Linux `execve` (auditd)
   3. Web Access Logs (NCSA Common/Combined, Nginx, Apache)
 - **Correlation Support**: Translates Sigma correlation rules to Wazuh `<if_matched_sid>` + `<same_field>` + `<frequency>` rules.
-- **Fail-Fast Typed Errors**: Unsupported modifiers or constructs raise typed exceptions rather than generating broken XML.
+- **Fail-Fast Typed Errors**: Unsupported modifiers or constructs raise typed exceptions rather than generating broken or misleading XML.
+
+---
 
 ## Quickstart (30 Seconds)
 
@@ -29,6 +36,9 @@ pip install -e .
 # 2. Create a test Sigma rule
 cat << 'EOF' > my_rule.yml
 title: Test Cmd Rule
+status: test
+falsepositives:
+    - Benign system administrators
 logsource:
     category: process_creation
     product: windows
@@ -45,6 +55,8 @@ sigma convert -t wazuh -p wazuh my_rule.yml
 
 > [!NOTE]
 > **Virtual Environment Note**: `pySigma` discovers backend targets dynamically via Python entry points. If you encounter `Error: Invalid value for '--target' / '-t': 'wazuh' is not one of...`, ensure your virtual environment where `pysigma-backend-wazuh` was installed is active (`source .venv/bin/activate`).
+
+---
 
 ## Usage & CLI Reference
 
@@ -80,6 +92,8 @@ rule_yaml = """
 title: Suspicious Cmd Execution
 id: 25b16954-bf63-42d4-bb32-9c3f03b22cf3
 status: test
+falsepositives:
+    - Administrative maintenance scripts
 logsource:
     category: process_creation
     product: windows
@@ -92,7 +106,15 @@ detection:
 
 collection = SigmaCollection.from_yaml(rule_yaml)
 pipeline = wazuh_windows_pipeline()
-backend = WazuhBackend(processing_pipeline=pipeline)
+
+# Configure backend with SOC alert tuning options
+backend = WazuhBackend(
+    processing_pipeline=pipeline,
+    min_rule_id=100000,
+    max_rule_id=120000,
+    demote_experimental=True,  # Cap experimental/test rules at level 3
+    include_comments=True,     # Embed false positives and status triage notes
+)
 
 xml_output = backend.convert(collection)
 print(xml_output)
@@ -101,7 +123,9 @@ print(xml_output)
 Generated Wazuh XML:
 ```xml
 <group name="sigma,">
-  <rule id="104921" level="6">
+  <!-- Status: test (demoted to level 3 for SOC tuning) -->
+  <!-- False Positives: Administrative maintenance scripts -->
+  <rule id="104921" level="3">
     <if_group>sysmon_event1</if_group>
     <field name="win.eventdata.image" type="pcre2">(?i)\\cmd\.exe$</field>
     <field name="win.eventdata.commandLine" type="pcre2">(?i)whoami</field>
@@ -111,7 +135,61 @@ Generated Wazuh XML:
 </group>
 ```
 
-## Measured Benchmark Report
+---
+
+## Production Wazuh Deployment Guide
+
+### 1. Safe Rule File Placement
+
+> [!CAUTION]
+> **Never overwrite `/var/ossec/etc/rules/local_rules.xml`**. Overwriting this file destroys existing custom enterprise rules and internal detections.
+>
+> Wazuh automatically loads all XML files matching `/var/ossec/etc/rules/*.xml` alphabetically.
+
+Save your converted Sigma rules into a dedicated custom ruleset file:
+```bash
+# Save to a dedicated file
+sigma convert -t wazuh -p wazuh rules/ > /var/ossec/etc/rules/0950-sigma_rules.xml
+```
+
+### 2. Multi-Node Cluster Deployment
+
+In a Wazuh multi-node cluster (Manager Master and Workers):
+- **Deploy only on the Master Node**: Custom rules and decoders must be written to the Master Node `/var/ossec/etc/rules/` and `/var/ossec/etc/decoders/`.
+- **Automatic Cluster Sync**: Wazuh's cluster daemon (`wazuh-clusterd`) automatically synchronizes rules across all worker nodes.
+
+### 3. Syntax Verification & Service Reload
+
+Always test the generated ruleset with `wazuh-analysisd` before restarting your manager:
+
+```bash
+# Test rule and decoder syntax
+/var/ossec/bin/wazuh-analysisd -t
+
+# If output confirms valid configuration, restart or reload
+/var/ossec/bin/wazuh-control restart
+```
+
+---
+
+## Supported Scope & Limitations
+
+### Fully Supported Scope
+- **Windows Process Creation**: Sysmon Event ID 1 & Windows Security 4688 (`CommandLine`, `Image`, `ParentImage`, `User`, `OriginalFileName`, `Hashes`).
+- **Linux Process Execution**: Linux auditd `SYSCALL` / `EXECVE` logs (`audit.exe`, `audit.command`, `audit.auid`, `audit.cwd`).
+- **Web Server Access**: Apache, Nginx, and NCSA access logs (`url`, `srcip`, `protocol`, `id`, `browser`).
+- **Modifiers**: `contains`, `startswith`, `endswith`, `re` (regex), `all`, `windash`, `base64offset`, `exists`.
+- **Logic**: Arbitrary boolean trees (`and`, `or`, `not`, `1 of`, `all of`), keyword searches.
+
+### Unsupported Constructs (Fails Closed)
+In accordance with our **Correctness Before Coverage** principle, the backend raises typed exceptions (`WazuhUnsupportedConditionError`) rather than emitting incorrect or misleading rules for:
+- **Numeric Comparisons** (`|gt`, `|gte`, `|lt`, `|lte`): Wazuh field matching is string and regex-based.
+- **Field Non-Existence Checks** (`field|exists: false`): Wazuh cannot natively evaluate field non-existence within an event.
+- **Aggregations Requiring Statistical Memory**: Wazuh rules evaluate single events or simple sliding-window frequency counts, not SQL-like aggregations.
+
+---
+
+## Benchmarks & Verification
 
 Evaluated against the pinned SigmaHQ commit [`05d1031f537e830b76da53bae2400c5814c89165`](https://github.com/SigmaHQ/sigma/commit/05d1031f537e830b76da53bae2400c5814c89165) inside a live Wazuh Manager (v4.9.0) using `wazuh-analysisd -t` and `wazuh-logtest`:
 
@@ -123,40 +201,16 @@ Evaluated against the pinned SigmaHQ commit [`05d1031f537e830b76da53bae2400c5814
 | **Positive Fixture Firing Rate** | **83.0%** (112/135) | $\ge 80\%$ | **PASS** |
 | **Negative Fixture Silence Rate** | **100.0%** (135/135) | $100\%$ (20 negative fixtures) | **PASS** |
 
-See [`CONVERSION_REPORT.md`](CONVERSION_REPORT.md) for full benchmark breakdown, negative fixture definitions, and itemized unsupported constructs.
+See [`CONVERSION_REPORT.md`](CONVERSION_REPORT.md) and [`SEMANTIC_CORRECTNESS_REPORT.md`](SEMANTIC_CORRECTNESS_REPORT.md) for full audit reports.
 
-## Supported Log Sources & Shipped Decoders
+---
 
-This backend includes complete, verified decoders and base rules ready for production deployment:
+## Security & Governance
 
-1. **Windows Process Creation** (`decoders/0100-wazuh-sysmon-proc.xml`):
-   - Supports Sysmon Event ID 1 & Windows Security Event 4688.
-   - Extracts `win.eventdata.image`, `win.eventdata.commandLine`, `win.eventdata.parentImage`, and `win.eventdata.user`.
-   - Pipeline: `wazuh_windows`
-2. **Linux Auditd `execve`** (`decoders/0101-wazuh-auditd-execve.xml`):
-   - Decodes Linux audit subsystem `EXECVE` / `SYSCALL` events.
-   - Extracts `audit.exe`, `audit.command`, `audit.auid`, `audit.cwd`.
-   - Pipeline: `wazuh_linux`
-3. **HTTP Access Logs** (`decoders/0102-wazuh-web-access.xml`):
-   - Decodes NCSA Common, NCSA Combined, Nginx, and Apache access logs.
-   - Maps static and dynamic fields: `url`, `protocol`, `id`, `srcip`, `browser`.
-   - Pipeline: `wazuh_web`
+- [Security Policy & Vulnerability Reporting](SECURITY.md)
+- [Contributing Guidelines & Architecture Principles](CONTRIBUTING.md)
 
-To install decoders in your Wazuh Manager:
-```bash
-cp decoders/*.xml /var/ossec/etc/decoders/
-/var/ossec/bin/wazuh-control restart
-```
-
-## Architecture & Compiler Internals
-
-Sigma rules cannot be mapped 1:1 to Wazuh because Wazuh lacks an arbitrary query language and relies on XML rule trees:
-
-1. **Boolean AST to DNF Normalization**: Sigma conditions are parsed into an Abstract Syntax Tree (AST) and normalized into Disjunctive Normal Form (DNF). Disjunctions (OR) across different fields are compiled into separate Wazuh rules sharing deterministic subrule IDs or chained via `<if_sid>`.
-2. **Same-Field Regex Optimization**: Multiple `ConditionOR` clauses on the same field (or values with `|contains` modifiers) are optimized into a single `<field>` with regex alternation `|`, eliminating unnecessary rule bloat.
-3. **Static vs Dynamic Field Mapping**: Wazuh separates core static fields (`url`, `srcip`, `protocol`, `id`) from dynamic decoded fields. The serializer automatically renders static fields as `<url type="pcre2">` and dynamic fields as `<field name="...">`.
-4. **Keyword Searches**: Full-log keyword matches (`keywords:`) are compiled to unanchored `<regex type="pcre2">` matching across the entire raw log line.
-5. **Deterministic SIDs**: All rule IDs are deterministically derived using SHA-256 with salting into the local user SID space `100000 - 120000`. Re-converting the same rule is idempotent and guarantees consistent SID generation across pipeline re-runs.
+---
 
 ## License
 

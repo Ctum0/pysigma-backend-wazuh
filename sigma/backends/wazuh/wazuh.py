@@ -105,6 +105,8 @@ class WazuhBackend(Backend):
         default_parent_group: Optional[str] = None,
         group_name: str = "sigma,",
         chain_rules: bool = False,
+        demote_experimental: bool = False,
+        include_comments: bool = True,
         **kwargs,
     ):
         super().__init__(processing_pipeline, collect_errors, **kwargs)
@@ -116,6 +118,8 @@ class WazuhBackend(Backend):
         self.default_parent_group = default_parent_group
         self.group_name = group_name
         self.chain_rules = chain_rules
+        self.demote_experimental = demote_experimental
+        self.include_comments = include_comments
 
     # -------------------------------------------------------------------------
     # Value to Regex / Pattern conversion
@@ -564,6 +568,30 @@ class WazuhBackend(Backend):
             description = f"{rule.title}: {rule.description}"
         description = description.replace("\n", " ").strip()
 
+        # Status inspection and experimental demotion
+        rule_status_str = None
+        if hasattr(rule, "status") and rule.status:
+            rule_status_str = str(rule.status.name if hasattr(rule.status, "name") else rule.status).lower()
+
+        if self.demote_experimental and rule_status_str in ("experimental", "test"):
+            rule_level = min(rule_level, 3)
+
+        # Context triage comments (false positives, status, tuning notes)
+        comments: List[str] = []
+        if self.include_comments:
+            if rule_status_str:
+                if self.demote_experimental and rule_status_str in ("experimental", "test"):
+                    comments.append(f"Status: {rule_status_str} (demoted to level {rule_level} for SOC tuning)")
+                elif rule_status_str == "deprecated":
+                    comments.append("WARNING: Upstream Sigma rule is marked DEPRECATED")
+                else:
+                    comments.append(f"Status: {rule_status_str}")
+
+            if hasattr(rule, "falsepositives") and rule.falsepositives:
+                clean_fps = [str(fp).strip() for fp in rule.falsepositives if str(fp).strip()]
+                if clean_fps:
+                    comments.append(f"False Positives: {', '.join(clean_fps)}")
+
         # MITRE ATT&CK tags
         mitre_ids = []
         groups = ["sigma"]
@@ -610,6 +638,7 @@ class WazuhBackend(Backend):
                         if_group=parent_group,
                         mitre_ids=mitre_ids,
                         groups=groups,
+                        comments=comments if branch_idx == 0 else [],
                     )
                     wazuh_rules.append(w_rule)
             else:
@@ -636,6 +665,7 @@ class WazuhBackend(Backend):
                     if_sid=branch_sids,
                     mitre_ids=mitre_ids,
                     groups=groups,
+                    comments=comments,
                 )
                 wazuh_rules.append(alert_rule)
 

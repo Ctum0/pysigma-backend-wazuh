@@ -107,15 +107,23 @@ class WazuhRule:
     mitre_ids: List[str] = field(default_factory=list)
     groups: List[str] = field(default_factory=list)
     options: List[str] = field(default_factory=list)
+    comments: List[str] = field(default_factory=list)
 
     def to_xml(self, indent: str = "  ") -> str:
+        lines = []
+        if self.comments:
+            for comment in self.comments:
+                clean_comment = str(comment).replace("--", "- -").strip()
+                if clean_comment:
+                    lines.append(f"{indent}<!-- {clean_comment} -->")
+
         attrs = [f'id="{self.id}"', f'level="{self.level}"']
         if self.frequency is not None:
             attrs.append(f'frequency="{self.frequency}"')
         if self.timeframe is not None:
             attrs.append(f'timeframe="{self.timeframe}"')
 
-        lines = [f"{indent}<rule {' '.join(attrs)}>"]
+        lines.append(f"{indent}<rule {' '.join(attrs)}>")
         inner_indent = indent + "  "
 
         if self.if_sid:
