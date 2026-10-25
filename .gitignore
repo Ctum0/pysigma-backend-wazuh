@@ -18,5 +18,8 @@ corpus/
 # Local build artifacts
 build/
 dist/
-*.egg-info/
 .artifacts/
+
+# Local test files
+my_rule.yml
+*.test.yml

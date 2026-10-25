@@ -16,30 +16,57 @@ A production-grade [pySigma](https://github.com/SigmaHQ/pySigma) backend that co
 - **Correlation Support**: Translates Sigma correlation rules to Wazuh `<if_matched_sid>` + `<same_field>` + `<frequency>` rules.
 - **Fail-Fast Typed Errors**: Unsupported modifiers or constructs raise typed exceptions rather than generating broken XML.
 
-## Installation
+## Quickstart (30 Seconds)
 
 ```bash
-pip install pysigma-backend-wazuh
+# 1. Clone repository & install in virtual environment
+git clone https://github.com/Ctum0/pysigma-backend-wazuh.git
+cd pysigma-backend-wazuh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# 2. Create a test Sigma rule
+cat << 'EOF' > my_rule.yml
+title: Test Cmd Rule
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    sel:
+        Image|endswith: '\cmd.exe'
+        CommandLine|contains: 'whoami'
+    condition: sel
+EOF
+
+# 3. Convert to native Wazuh XML
+sigma convert -t wazuh -p wazuh my_rule.yml
 ```
 
-Or with `uv`:
-```bash
-uv pip install -e .
-```
+> [!NOTE]
+> **Virtual Environment Note**: `pySigma` discovers backend targets dynamically via Python entry points. If you encounter `Error: Invalid value for '--target' / '-t': 'wazuh' is not one of...`, ensure your virtual environment where `pysigma-backend-wazuh` was installed is active (`source .venv/bin/activate`).
 
-## Usage
+## Usage & CLI Reference
 
-### Via Sigma CLI
+### Conversion Commands
 
 ```bash
-# Convert a single rule targeting Windows Process Creation
-sigma convert -t wazuh -p wazuh_windows rule.yml
+# Combined auto-detect pipeline (Windows, Linux, Web)
+sigma convert -t wazuh -p wazuh rule.yml
 
-# Convert targeting Linux auditd
-sigma convert -t wazuh -p wazuh_linux rule.yml
+# Specific log-source pipelines
+sigma convert -t wazuh -p wazuh_windows rule.yml   # Windows Sysmon & 4688
+sigma convert -t wazuh -p wazuh_linux rule.yml     # Linux auditd (execve)
+sigma convert -t wazuh -p wazuh_web rule.yml       # Web access logs
 
-# Convert targeting Webserver logs
-sigma convert -t wazuh -p wazuh_web rule.yml
+# Output standalone <rule> without outer <group> block
+sigma convert -t wazuh -p wazuh -f rule_only rule.yml
+
+# Batch convert a directory of rules
+sigma convert -t wazuh -p wazuh rules_dir/
+
+# Convert via STDIN
+cat rule.yml | sigma convert -t wazuh -p wazuh -
 ```
 
 ### Via Python API

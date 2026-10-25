@@ -252,3 +252,112 @@ def test_negated_keyword_search_handling():
     assert '<regex' in xml_str
     assert 'negate="yes"' in xml_str
 
+
+# ==============================================================================
+# 6. Syntax Edge Cases, Multi-document, and Formats
+# ==============================================================================
+
+def test_special_regex_characters_in_literal_string():
+    """Verify that regex meta characters inside literal strings are properly escaped."""
+    backend = WazuhBackend(processing_pipeline=wazuh_windows_pipeline())
+    yaml_text = r"""
+    title: Special Regex Characters in Literal String
+    id: 88888888-9999-aaaa-bbbb-cccccccccccc
+    logsource:
+        category: process_creation
+        product: windows
+    detection:
+        sel:
+            CommandLine|contains: "dir | findstr /i (test) [abc] {1,2} ^ $ + ? . *"
+        condition: sel
+    """
+    rule = SigmaCollection.from_yaml(yaml_text).rules[0]
+    w_rules = backend.convert_rule(rule)
+    assert len(w_rules) == 1
+    pattern = w_rules[0].fields[0].pattern
+    # Pipe, braces, brackets, parentheses must be escaped
+    assert r"\|" in pattern
+    assert r"\(" in pattern
+    assert r"\[" in pattern
+
+
+def test_one_of_and_all_of_patterns():
+    """Verify 1-of and all-of wildcards in conditions."""
+    backend = WazuhBackend(processing_pipeline=wazuh_windows_pipeline())
+    yaml_1_of = r"""
+    title: 1 of selection pattern
+    id: 99999999-aaaa-bbbb-cccc-dddddddddddd
+    logsource:
+        category: process_creation
+        product: windows
+    detection:
+        sel_cmd:
+            Image|endswith: "\\cmd.exe"
+        sel_ps:
+            Image|endswith: "\\powershell.exe"
+        condition: 1 of sel_*
+    """
+    rule_1 = SigmaCollection.from_yaml(yaml_1_of).rules[0]
+    w_rules_1 = backend.convert_rule(rule_1)
+    assert len(w_rules_1) == 1
+    # Optimized into alternation
+    assert "|" in w_rules_1[0].fields[0].pattern
+
+    yaml_all_of = r"""
+    title: all of selection pattern
+    id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+    logsource:
+        category: process_creation
+        product: windows
+    detection:
+        sel_img:
+            Image|endswith: "\\cmd.exe"
+        sel_flag:
+            CommandLine|contains: "/c"
+        condition: all of sel_*
+    """
+    rule_2 = SigmaCollection.from_yaml(yaml_all_of).rules[0]
+    w_rules_2 = backend.convert_rule(rule_2)
+    assert len(w_rules_2) == 1
+    assert len(w_rules_2[0].fields) == 2
+
+
+def test_multi_document_yaml_and_rule_only_format():
+    """Verify multi-document YAML and -f rule_only output format."""
+    backend = WazuhBackend(processing_pipeline=wazuh_windows_pipeline())
+    multi_yaml = (
+        "title: Multi Doc Rule 1\n"
+        "id: 10101010-2020-3030-4040-505050505050\n"
+        "logsource:\n"
+        "    category: process_creation\n"
+        "    product: windows\n"
+        "detection:\n"
+        "    sel:\n"
+        "        Image: 'C:\\Windows\\cmd.exe'\n"
+        "    condition: sel\n"
+        "---\n"
+        "title: Multi Doc Rule 2\n"
+        "id: 20202020-3030-4040-5050-606060606060\n"
+        "logsource:\n"
+        "    category: process_creation\n"
+        "    product: windows\n"
+        "detection:\n"
+        "    sel:\n"
+        "        Image: 'C:\\Windows\\powershell.exe'\n"
+        "    condition: sel\n"
+    )
+    col = SigmaCollection.from_yaml(multi_yaml)
+    assert len(col.rules) == 2
+
+    # Test default format (<group> wrapper)
+    xml_default = backend.convert(col)
+    assert "<group" in xml_default
+    assert "</group>" in xml_default
+
+    # Test rule_only format (no root <group name=... wrapper)
+    xml_rule_only = backend.convert(col, output_format="rule_only")
+    assert "<group name=" not in xml_rule_only
+    assert "<rule" in xml_rule_only
+    assert "</rule>" in xml_rule_only
+
+
