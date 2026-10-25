@@ -582,7 +582,7 @@ The rules generated assume the following field extractions shipped in `decoders/
 3. `decoders/0102-wazuh-web-access.xml`: Web access logs (`srcip`, `protocol`, `url`, `id`, `browser`).
 """
 
-    report_path = "CONVERSION_REPORT.md"
+    report_path = "docs/audit/CONVERSION_REPORT.md"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_md)
     print(f"\n[+] Conversion report successfully generated at {report_path}!")

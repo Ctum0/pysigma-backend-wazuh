@@ -201,12 +201,13 @@ Evaluated against the pinned SigmaHQ commit [`05d1031f537e830b76da53bae2400c5814
 | **Positive Fixture Firing Rate** | **83.0%** (112/135) | $\ge 80\%$ | **PASS** |
 | **Negative Fixture Silence Rate** | **100.0%** (135/135) | $100\%$ (20 negative fixtures) | **PASS** |
 
-See [`CONVERSION_REPORT.md`](CONVERSION_REPORT.md) and [`SEMANTIC_CORRECTNESS_REPORT.md`](SEMANTIC_CORRECTNESS_REPORT.md) for full audit reports.
+See [`docs/audit/`](docs/audit/) for full audit reports, benchmarks, and semantic correctness evaluations.
 
 ---
 
-## Security & Governance
+## Documentation & Governance
 
+- [Architecture & Verification Audit Reports](docs/audit/FINAL_AUDIT_REPORT.md)
 - [Security Policy & Vulnerability Reporting](SECURITY.md)
 - [Contributing Guidelines & Architecture Principles](CONTRIBUTING.md)
 
