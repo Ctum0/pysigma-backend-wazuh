@@ -56,6 +56,9 @@ sigma convert -t wazuh -p wazuh my_rule.yml
 > [!NOTE]
 > **Virtual Environment Note**: `pySigma` discovers backend targets dynamically via Python entry points. If you encounter `Error: Invalid value for '--target' / '-t': 'wazuh' is not one of...`, ensure your virtual environment where `pysigma-backend-wazuh` was installed is active (`source .venv/bin/activate`).
 
+> [!IMPORTANT]
+> **pySigma version compatibility**: this backend targets the pySigma 1.x API and pins `pysigma>=0.11,<2.0` / `sigma-cli<4.0`. pySigma 2.0 moved regex validation to RE2, which rejects PCRE-only constructs (lookarounds, backreferences) at rule-parse time — before any backend sees the rule. Installing this package normally will resolve to a supported version; if you upgrade pySigma by hand, pin it back first.
+
 ---
 
 ## Usage & CLI Reference

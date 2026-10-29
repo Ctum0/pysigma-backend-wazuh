@@ -4,6 +4,7 @@ import lxml.etree
 import pytest
 
 from sigma.collection import SigmaCollection
+from sigma.exceptions import SigmaRegularExpressionError
 from sigma.backends.wazuh import WazuhBackend
 from sigma.backends.wazuh.errors import (
     WazuhConversionError,
@@ -212,7 +213,12 @@ def test_unicode_and_multilingual_characters():
 # ==============================================================================
 
 def test_osregex_rejects_lookarounds_and_quantifiers():
-    """Verify that OS_Regex dialect strictly rejects PCRE-only constructs."""
+    """Verify that OS_Regex dialect strictly rejects PCRE-only constructs.
+
+    pySigma >= 2.0 validates regexes with RE2 at rule-parse time, so the rejection
+    may surface from ``SigmaCollection.from_yaml`` instead of the backend. Either
+    way the construct must never reach a generated Wazuh ruleset.
+    """
     backend = WazuhBackend(regex_engine="osregex")
     yaml_text = """
     title: PCRE Lookahead Rule
@@ -225,10 +231,13 @@ def test_osregex_rejects_lookarounds_and_quantifiers():
             CommandLine|re: '(?<=prefix)payload(?=suffix)'
         condition: sel
     """
-    rule = SigmaCollection.from_yaml(yaml_text).rules[0]
-    with pytest.raises(WazuhRegexDialectError) as exc_info:
+    with pytest.raises((WazuhRegexDialectError, SigmaRegularExpressionError)) as exc_info:
+        rule = SigmaCollection.from_yaml(yaml_text).rules[0]
         backend.convert_rule(rule)
-    assert "osregex" in str(exc_info.value)
+
+    # When the backend itself rejects it, the error must name the offending dialect.
+    if isinstance(exc_info.value, WazuhRegexDialectError):
+        assert "osregex" in str(exc_info.value)
 
 
 def test_negated_keyword_search_handling():
